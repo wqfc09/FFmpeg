@@ -46,8 +46,10 @@ jobs:
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
         
-        # 二次保险：如果 .pc 里还是 unknown，直接用 sed 强改
-        sed -i 's/Version: unknown/Version: 2.3.2/' $HOME/custom_build/lib/pkgconfig/kvazaar.pc
+        # 强制修改 .pc 文件中的版本号，确保 FFmpeg 能够通过 >= 2.0.0 的检测
+        sed -i 's/Version: .*/Version: 2.3.2/' $HOME/custom_build/lib/pkgconfig/kvazaar.pc
+        # 打印一下确认修改成功
+        cat $HOME/custom_build/lib/pkgconfig/kvazaar.pc
 
     # 3. 安装硬件加速头文件
     - name: Install Hardware Headers
@@ -64,9 +66,9 @@ jobs:
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
 
     # 4. 构建 FFmpeg 静态二进制文件
-    - name: Build FFmpeg Static
+# 4. 构建 FFmpeg (混合链接模式)
+    - name: Build FFmpeg
       run: |
-        # 混合 PKG_CONFIG_PATH：优先找手动编译的 libvpl/kvazaar，找不到再去系统目录找 dav1d/vpx/aom
         export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib64/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         ./configure \
@@ -76,7 +78,6 @@ jobs:
           --disable-nonfree \
           --enable-static \
           --disable-shared \
-          --pkg-config-flags="--static" \
           --disable-all \
           --enable-ffmpeg \
           --enable-ffprobe \
