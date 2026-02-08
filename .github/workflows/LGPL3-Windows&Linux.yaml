@@ -25,7 +25,7 @@ jobs:
           sudo apt-get install -y libvpx-dev libaom-dev libopus-dev libdav1d-dev libva-dev libdrm-dev
         fi
 
-# 1. 编译 libvpl (修复 Windows 交叉编译)
+# 1. 编译 libvpl 
     - name: Build libvpl
       run: |
         git clone --branch main --depth 1 https://github.com/oneapi-src/oneVPL libvpl
@@ -49,10 +49,14 @@ jobs:
           sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
         fi
 
-# 2. 编译 kvazaar (修复 Windows 下的 CMake IN_LIST 语法报错)
+# 2. 编译 kvazaar 
     - name: Build kvazaar
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
+        
+        #在 CMakeLists.txt 的第一行插入策略设置，解决 IN_LIST 报错
+        sed -i '1i cmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
+
         if [ "${{ matrix.target }}" = "windows" ]; then
           cmake -B kvz_build -S kvazaar \
                 -DCMAKE_SYSTEM_NAME=Windows \
@@ -61,11 +65,11 @@ jobs:
                 -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
                 -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
                 -DBUILD_SHARED_LIBS=OFF \
-                -Dkvazaar_tests=OFF \
-                -DCMAKE_POLICY_DEFAULT_CMP0057=NEW  # <--- 核心修复：开启 IN_LIST 语法支持
+                -Dkvazaar_tests=OFF
         else
           cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -Dkvazaar_tests=OFF
         fi
+        
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
         
