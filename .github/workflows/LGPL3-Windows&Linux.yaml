@@ -1,0 +1,108 @@
+name: FFmpeg-LGPL3-Windows&Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-unix-win:
+    strategy:
+      matrix:
+        target: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout FFmpeg
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Install Build Essentials
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config nasm yasm cmake curl tar git meson ninja-build
+        if [ "${{ matrix.target }}" = "windows" ]; then
+          sudo apt-get install -y mingw-w64
+        else
+          sudo apt-get install -y libvpx-dev libaom-dev libopus-dev libdav1d-dev libva-dev libdrm-dev
+        fi
+
+# 1. 编译 libvpl (修复 Windows 交叉编译)
+    - name: Build libvpl
+      run: |
+        git clone --branch main --depth 1 https://github.com/oneapi-src/oneVPL libvpl
+        if [ "${{ matrix.target }}" = "windows" ]; then
+          cmake -B vpl_build -S libvpl \
+                -DCMAKE_SYSTEM_NAME=Windows \
+                -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+                -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
+        else
+          cmake -B vpl_build -S libvpl -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
+        fi
+        cmake --build vpl_build --parallel $(nproc)
+        cmake --install vpl_build
+        PC_FILE=$(find $HOME/target_build -name "vpl.pc" | head -n 1)
+        sed -i 's/Version: .*/Version: 2.16.0/' "$PC_FILE"
+        if [ "${{ matrix.target }}" = "windows" ]; then
+          sed -i 's/Libs: .*/& -lstdc++/' "$PC_FILE"
+        else
+          sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
+        fi
+
+    # 2. 编译 kvazaar (修复 Windows 交叉编译)
+    - name: Build kvazaar
+      run: |
+        git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
+        if [ "${{ matrix.target }}" = "windows" ]; then
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_NAME=Windows \
+                -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+                -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+        else
+          cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+        fi
+        cmake --build kvz_build --parallel $(nproc)
+        cmake --install kvz_build
+        PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
+        sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
+        sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl/' "$PC_FILE"
+
+    # 3. 安装硬件头文件
+    - name: Install Hardware Headers
+      run: |
+        mkdir -p $HOME/target_build/include
+        curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
+        tar -xzf nvenc.tar.gz
+        cd nv-codec-headers-master && make PREFIX=$HOME/target_build install && cd ..
+        curl -L https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
+        tar -xzf amf.tar.gz
+        mkdir -p $HOME/target_build/include/AMF && cp -r AMF-master/amf/public/include/* $HOME/target_build/include/AMF/
+
+    # 4. 构建 FFmpeg
+    - name: Build FFmpeg
+      run: |
+        export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
+        
+        COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-encoder=hevc_qsv,h264_qsv,libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
+
+        if [ "${{ matrix.target }}" = "linux" ]; then
+          ./configure $COMMON_ARGS \
+            --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf \
+            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
+            --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl"
+        else
+          ./configure $COMMON_ARGS \
+            --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
+            --enable-encoder=h264_nvenc,hevc_nvenc,amf \
+            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
+            --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++"
+        fi
+        make -j$(nproc) && make install
+
+    - name: Upload Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: ffmpeg-${{ matrix.target }}
+        path: /home/runner/publish/bin/ffmpeg*
