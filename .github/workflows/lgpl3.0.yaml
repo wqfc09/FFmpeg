@@ -19,7 +19,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
           curl tar git libvpx-dev libaom-dev libopus-dev zlib1g-dev \
-          libdav1d-dev  # 这里直接使用系统库
+          libdav1d-dev libva-dev libdrm-dev  # 这里直接使用系统库
 
     # 1. 手动编译 libvpl (Intel QSV 核心)
     - name: Build libvpl
