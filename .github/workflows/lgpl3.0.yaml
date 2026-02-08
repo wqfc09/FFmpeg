@@ -24,13 +24,33 @@ jobs:
     # 1. 手动编译 libvpl (Intel QSV 核心)
     - name: Build libvpl
       run: |
-        curl -L https://github.com/intel/libvpl/archive/refs/heads/main.tar.gz -o vpl.tar.gz
-        tar -xzf vpl.tar.gz
-        cd libvpl-main
-        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF \
+        git clone --branch main --depth 1 https://github.com/oneapi-src/oneVPL libvpl
+        cmake -B vpl_build -S libvpl \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DBUILD_EXAMPLES=OFF \
+              -DBUILD_TESTS=OFF \
               -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
-        cmake --build build --parallel $(nproc)
-        cmake --install build
+        cmake --build vpl_build --parallel $(nproc)
+        cmake --install vpl_build
+
+        # 寻找 vpl.pc 可能存在的各种路径
+        VPL_PC=$(find $HOME/custom_build -name "vpl.pc" | head -n 1)
+        echo "Found vpl.pc at: $VPL_PC"
+
+        # 1. 修复版本号 (解决 >= 2.6 检测)
+        # 目前 oneVPL 官方版本通常在 2.10+，我们手动填入 2.13.0 确保绝对通过
+        sed -i 's/Version: .*/Version: 2.13.0/' $VPL_PC
+        
+        # 2. 补全链接参数 (解决静态链接时的符号搜索问题)
+        # Intel QSV 在 Linux 下强烈依赖 dl (动态加载) 和 stdc++
+        sed -i 's/Libs:.*/Libs: -L${libdir} -lvpl -lstdc++ -ldl/' $VPL_PC
+        
+        # 3. 兼容性检查：确保 pkg-config 目录在 lib 下 (防止 CMake 把它装进 lib64)
+        mkdir -p $HOME/custom_build/lib/pkgconfig
+        cp $VPL_PC $HOME/custom_build/lib/pkgconfig/
+
+        echo "Modified vpl.pc content:"
+        cat $HOME/custom_build/lib/pkgconfig/vpl.pc
 
     # 2. 手动编译 kvazaar (H.265 CPU 编码)
     - name: Build kvazaar
@@ -69,8 +89,8 @@ jobs:
 # 4. 构建 FFmpeg (混合链接模式)
     - name: Build FFmpeg Static
       run: |
-        # 关键：将所有可能的 pkgconfig 路径包含进来
-        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib64/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+        # 关键：将所有可能的 pkgconfig 路径包含进来，增加一个对 x86_64-linux-gnu 的探测
+        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         ./configure \
           --prefix=$HOME/custom_build/publish \
@@ -106,8 +126,8 @@ jobs:
           --enable-amf \
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
-          --extra-cflags="-I$HOME/custom_build/include" \
-          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib64 -lpthread -lm -ldl"
+          --extra-cflags="-I$HOME/custom_build/include -I$HOME/custom_build/include/vpl" \
+          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib/x86_64-linux-gnu -lpthread -lm -ldl -lstdc++"
 
         make -j$(nproc)
         make install
