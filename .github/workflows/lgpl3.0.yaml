@@ -16,21 +16,31 @@ jobs:
     - name: Install Build Essentials
       run: |
         sudo apt-get update
+        # 彻底移除系统旧版以防 pkg-config 干扰
+        sudo apt-get remove -y libdav1d-dev
         sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
-          curl tar git libvpx-dev libdav1d-dev libaom-dev libopus-dev zlib1g-dev
+          curl tar git meson ninja-build libvpx-dev libaom-dev libopus-dev zlib1g-dev
 
-    # 1. 从源码手动编译 libvpl (Intel VPL 核心)
+    # 1. 手动编译最新版 dav1d (由您提供的地址)
+    - name: Build dav1d
+      run: |
+        curl -L https://github.com/videolan/dav1d/archive/refs/heads/master.tar.gz -o dav1d.tar.gz
+        tar -xzf dav1d.tar.gz
+        cd dav1d-master
+        meson setup build --prefix=$HOME/custom_build --libdir=lib --buildtype=release -Ddefault_library=static -Dtests=false -Dexamples=false
+        ninja -C build install
+
+    # 2. 手动编译 libvpl (Intel QSV)
     - name: Build libvpl
       run: |
         curl -L https://github.com/intel/libvpl/archive/refs/heads/main.tar.gz -o vpl.tar.gz
         tar -xzf vpl.tar.gz
         cd libvpl-main
-        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF \
-              -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
+        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
         cmake --build build --parallel $(nproc)
         cmake --install build
 
-    # 2. 从源码手动编译 kvazaar (H.265 CPU 编码)
+    # 3. 手动编译 kvazaar (H.265 CPU 编码)
     - name: Build kvazaar
       run: |
         curl -L https://github.com/ultravideo/kvazaar/archive/refs/heads/master.tar.gz -o kvz.tar.gz
@@ -40,32 +50,24 @@ jobs:
         cmake --build build --parallel $(nproc)
         cmake --install build
 
-    # 3. 安装硬件加速头文件 (使用您提供的正确路径)
+    # 4. 安装硬件加速头文件 (AMF 地址已修正)
     - name: Install Hardware Headers
       run: |
         mkdir -p $HOME/custom_build/include
-        
-        # NVIDIA NVENC 头文件
+        # NVIDIA Headers
         curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
         tar -xzf nvenc.tar.gz
-        cd nv-codec-headers-master
-        make PREFIX=$HOME/custom_build install
-        cd ..
-        
-        # AMD AMF 头文件 (修正后的路径)
+        cd nv-codec-headers-master && make PREFIX=$HOME/custom_build install && cd ..
+        # AMD AMF Headers (由您提供的地址)
         curl -L https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
         tar -xzf amf.tar.gz
         mkdir -p $HOME/custom_build/include/AMF
-        # 必须将 public/include 下的内容直接放入 AMF/ 目录下
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
-        
-        echo "Hardware headers installed."
 
-    # 4. 构建 FFmpeg 静态二进制文件
+    # 5. 最终构建 FFmpeg 静态二进制文件
     - name: Build FFmpeg Static
       run: |
-        # 设置 PKG_CONFIG 路径，确保能找到 libvpl 和 libkvazaar
-        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib64/pkgconfig:/usr/lib/pkgconfig
+        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         
         ./configure \
           --prefix=$HOME/custom_build/publish \
@@ -76,25 +78,28 @@ jobs:
           --disable-shared \
           --pkg-config-flags="--static" \
           --disable-all \
-          --enable-ffmpeg --enable-ffprobe \
-          --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
-          --enable-demuxer=mov,mp4,m4a,h264,hevc \
+          --enable-ffmpeg \
+          --enable-ffprobe \
+          --enable-avcodec \
+          --enable-avformat \
+          --enable-avfilter \
+          --enable-swresample \
+          --enable-swscale \
+          --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
           --enable-muxer=mp4,mov \
           --enable-protocol=file,http,https,tcp,udp \
           --enable-decoder=h264,hevc,vp9,av1,aac,opus \
           --enable-parser=h264,hevc,vp9,av1,aac,opus \
-          --enable-libvpx --enable-libdav1d \
+          --enable-libvpx \
+          --enable-libdav1d \
           --enable-libvpl \
           --enable-libkvazaar \
           --enable-libaom \
           --enable-libopus \
-          --enable-encoder=h264_nvenc,h264_vaapi \
-          --enable-encoder=hevc_nvenc,hevc_qsv,hevc_vaapi,libkvazaar \
-          --enable-encoder=av1_nvenc,av1_qsv,libaom_av1 \
-          --enable-encoder=libvpx_vp9,aac,libopus \
-          --enable-nvenc --enable-nvdec \
+          --enable-encoder=h264_nvenc,h264_vaapi,hevc_nvenc,hevc_qsv,hevc_vaapi,libkvazaar,av1_nvenc,av1_qsv,libaom_av1,libvpx_vp9,aac,libopus \
+          --enable-nvenc \
+          --enable-nvdec \
           --enable-vaapi \
-          --enable-libvpl \
           --enable-amf \
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
@@ -107,5 +112,5 @@ jobs:
     - name: Upload Binary
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-lgpl3-linux-static
-        path: $HOME/custom_build/publish/bin/ffmpeg
+        name: ffmpeg-lgpl3-linux-v15
+        path: ${{ github.workspace }}/../custom_build/publish/bin/ffmpeg
