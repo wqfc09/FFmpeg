@@ -1,4 +1,4 @@
-name: FFmpeg-LGPL3
+name: FFmpeg-LGPL3-Ultimate-V6
 
 on:
   workflow_dispatch:
@@ -20,49 +20,35 @@ jobs:
       uses: msys2/setup-msys2@v2
       with:
         update: true
-        install: >-
-          make
-          pkg-config
-          nasm
-          yasm
-          curl
-          tar
+        install: make pkg-config nasm yasm curl tar
 
-    # 重点 1：通过清单文件定义依赖，避免命令行路径和名称错误
-    - name: Create vcpkg.json
+    # 核心修复：手动更新 vcpkg 索引并清除环境变量干扰
+    - name: Update VCPKG Registry
       shell: bash
       run: |
-        cat <<EOF > vcpkg.json
-        {
-          "name": "ffmpeg-custom-build",
-          "version": "1.0.0",
-          "dependencies": [
-            "zlib",
-            "libvpx",
-            "dav1d",
-            "aom",
-            "onevpl",
-            "opus",
-            "kvazaar"
-          ]
-        }
-        EOF
+        # 强制删除可能导致冲突的环境变量
+        unset VCPKG_ROOT
+        # 进入 vcpkg 预装目录并拉取最新 port 定义
+        cd /c/vcpkg
+        git pull
+        ./bootstrap-vcpkg.bat
 
-    # 重点 2：使用更稳健的 vcpkg 环境
-    - name: Install Dependencies via vcpkg (Manifest Mode)
+    - name: Install Dependencies
+      shell: cmd
       run: |
-        # 使用系统自带的 vcpkg，但通过清单模式安装到当前目录
-        vcpkg install --triplet=x64-windows-static --x-install-root=./vcpkg_installed
+        :: 显式指定路径，避免 mismatched 警告
+        C:\vcpkg\vcpkg.exe install --triplet=x64-windows-static ^
+          zlib libvpx dav1d aom onevpl opus kvazaar
 
     - name: Install Hardware Headers
       shell: bash
       run: |
         mkdir -p /usr/local/include
-        # NVIDIA 头文件
+        # NVIDIA
         curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
         tar -xzf nvenc.tar.gz
         cp -r nv-codec-headers-master/include/* /usr/local/include/
-        # AMD 头文件
+        # AMD
         curl -L https://github.com/GPUOpen-Libraries-And-SDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
         tar -xzf amf.tar.gz
         mkdir -p /usr/local/include/AMF
@@ -71,65 +57,42 @@ jobs:
     - name: Build FFmpeg
       shell: msys2 {0}
       run: |
-        # 定位清单模式安装的库目录
-        VCPKG_INSTALLED_DIR=$(pwd)/vcpkg_installed/x64-windows-static
-        
-        # 将 Windows 路径转换为 MSYS2 路径
-        VCPKG_PATH=$(echo "/${VCPKG_INSTALLED_DIR}" | sed 's/\\/\//g' | sed 's/://g')
-        export PKG_CONFIG_PATH="${VCPKG_PATH}/lib/pkgconfig"
+        # 准确定位静态库安装后的路径
+        VCPKG_STATIC_PATH="/c/vcpkg/installed/x64-windows-static"
+        export PKG_CONFIG_PATH="${VCPKG_STATIC_PATH}/lib/pkgconfig"
         
         ./configure \
           --toolchain=msvc \
           --arch=x86_64 \
           --prefix=./publish \
-          --enable-version3 \
-          --disable-gpl \
-          --disable-nonfree \
-          --enable-static \
-          --disable-shared \
+          --enable-version3 --disable-gpl --disable-nonfree \
+          --enable-static --disable-shared \
           --pkg-config-flags="--static" \
-          \
           --disable-all \
           --enable-ffmpeg --enable-ffprobe \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
-          \
-          # 1. 容器与协议 (MP4 核心)
           --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
           --enable-muxer=mp4,mov \
           --enable-protocol=file,http,https,tcp,udp \
-          \
-          # 2. 视频解码 (含 H.264)
           --enable-decoder=h264,hevc,vp9,av1 \
           --enable-parser=h264,hevc,vp9,av1 \
           --enable-libvpx --enable-libdav1d \
-          \
-          # 3. 视频编码 (硬件加速 + Kvazaar)
           --enable-encoder=h264_nvenc,h264_amf,h264_qsv \
           --enable-encoder=hevc_nvenc,hevc_amf,hevc_qsv,libkvazaar \
           --enable-encoder=av1_nvenc,av1_amf,av1_qsv,libaom_av1 \
           --enable-encoder=libvpx_vp9 \
-          \
-          # 4. 音频支持 (AAC + Opus)
-          --enable-encoder=aac,libopus \
-          --enable-decoder=aac,opus \
-          --enable-parser=aac,opus \
-          --enable-libopus \
-          \
-          # 5. 硬件加速底层
+          --enable-encoder=aac,libopus --enable-decoder=aac,opus --enable-parser=aac,opus --enable-libopus \
           --enable-nvenc --enable-nvdec --enable-amf --enable-qsv --enable-libvpl --enable-d3d11va --enable-dxva2 \
-          \
-          # 6. 比特流过滤器与基础滤镜
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
-          \
-          --extra-cflags="-I${VCPKG_PATH}/include -I/usr/local/include" \
-          --extra-ldflags="-LIBPATH:${VCPKG_PATH}/lib -static"
+          --extra-cflags="-I${VCPKG_STATIC_PATH}/include -I/usr/local/include" \
+          --extra-ldflags="-LIBPATH:${VCPKG_STATIC_PATH}/lib -static"
 
         make -j$(nproc)
         make install
 
-    - name: Upload Artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-lgpl3-optimized-final
+        name: ffmpeg-lgpl3-fixed
         path: publish/bin/*.exe
