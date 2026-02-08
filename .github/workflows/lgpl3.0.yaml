@@ -38,7 +38,7 @@ jobs:
       run: |
         curl -L https://github.com/ultravideo/kvazaar/archive/refs/tags/v2.3.2.tar.gz -o kvz.tar.gz
         tar -xzf kvz.tar.gz
-        cd kvazaar-master
+        cd kvazaar-2.3.2
         cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
         cmake --build build --parallel $(nproc)
         cmake --install build
