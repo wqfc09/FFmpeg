@@ -1,10 +1,10 @@
-name: FFmpeg-Multi-Platform-V23-VPL-Focus
+name: FFmpeg-LGPL3-MultiPlatform
 
 on:
   workflow_dispatch:
 
 jobs:
-  # --- 1. Linux & Windows 构建 (在 Ubuntu 上交叉编译) ---
+  # --- 任务 1: Linux & Windows 构建 (在 Ubuntu 上进行) ---
   build-unix-win:
     strategy:
       matrix:
@@ -26,50 +26,65 @@ jobs:
           sudo apt-get install -y libvpx-dev libaom-dev libopus-dev libdav1d-dev libva-dev libdrm-dev
         fi
 
-    # 1. 编译 libvpl (支持 Linux 和 Windows 交叉编译)
     - name: Build libvpl
       run: |
         git clone --branch main --depth 1 https://github.com/oneapi-src/oneVPL libvpl
         if [ "${{ matrix.target }}" = "windows" ]; then
-          # Windows 交叉编译配置
           cmake -B vpl_build -S libvpl \
                 -DCMAKE_SYSTEM_NAME=Windows \
                 -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
                 -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
                 -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
         else
-          # Linux 原生编译配置
           cmake -B vpl_build -S libvpl -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
         fi
         cmake --build vpl_build --parallel $(nproc)
         cmake --install vpl_build
-
-        # 找到生成的 vpl.pc 并修复
         PC_FILE=$(find $HOME/target_build -name "vpl.pc" | head -n 1)
         sed -i 's/Version: .*/Version: 2.16.0/' "$PC_FILE"
-        # 补全静态链接依赖
         if [ "${{ matrix.target }}" = "windows" ]; then
           sed -i 's/Libs: .*/& -lstdc++/' "$PC_FILE"
         else
           sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
         fi
 
-    # 2. 编译 kvazaar (全平台静态)
     - name: Build kvazaar
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
+        sed -i '1i cmake_minimum_required(VERSION 3.10)\ncmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
         if [ "${{ matrix.target }}" = "windows" ]; then
-          cmake -B kvz_build -S kvazaar -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_NAME=Windows \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+                -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF
         else
-          cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF
         fi
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
-        sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
-        sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl/' "$PC_FILE"
+        if [ -f "$PC_FILE" ]; then
+          sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
+          if [ "${{ matrix.target }}" = "windows" ]; then
+            sed -i 's/Libs.private:.*/Libs.private: -lpthread/' "$PC_FILE"
+            sed -i '/^Libs:/ s/$/ -lpthread/' "$PC_FILE"
+            sed -i 's/^Cflags:.*/& -DKVZ_STATIC_LIB/' "$PC_FILE"
+          else
+            sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
+            sed -i '/^Libs:/ s/$/ -lpthread -lm -ldl -lrt/' "$PC_FILE"
+          fi
+        fi
 
-    # 3. 安装硬件加速头文件 (AMF & NVENC)
     - name: Install Hardware Headers
       run: |
         mkdir -p $HOME/target_build/include
@@ -80,25 +95,25 @@ jobs:
         tar -xzf amf.tar.gz
         mkdir -p $HOME/target_build/include/AMF && cp -r AMF-master/amf/public/include/* $HOME/target_build/include/AMF/
 
-    # 4. 构建 FFmpeg
     - name: Build FFmpeg
       run: |
-        export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
-        
-        COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-encoder=hevc_qsv,h264_qsv,av1_qsv,libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
-
+        export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+        COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
         if [ "${{ matrix.target }}" = "linux" ]; then
           ./configure $COMMON_ARGS \
-            --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf \
-            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
-            --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl"
+            --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus \
+            --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf,libkvazaar \
+            --extra-cflags="-I$HOME/target_build/include" \
+            --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl -lrt" || \
+          { tail -n 100 ffbuild/config.log; exit 1; }
         else
-          # Windows 交叉编译
           ./configure $COMMON_ARGS \
             --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
-            --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,amf \
-            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
-            --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++"
+            --pkg-config=pkg-config --pkg-config-flags="--static" \
+            --enable-encoder=h264_nvenc,hevc_nvenc,amf,libkvazaar \
+            --extra-cflags="-I$HOME/target_build/include -DKVZ_STATIC_LIB" \
+            --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++ -lpthread" || \
+          { tail -n 100 ffbuild/config.log; exit 1; }
         fi
         make -j$(nproc) && make install
 
@@ -108,16 +123,25 @@ jobs:
         name: ffmpeg-${{ matrix.target }}
         path: /home/runner/publish/bin/ffmpeg*
 
-  # --- 2. macOS 构建 (在 macOS 虚拟机，使用 VideoToolbox) ---
+  # --- 任务 2: macOS 构建 (在 macOS 虚拟机上原生编译) ---
   build-macos:
     runs-on: macos-latest
     steps:
-    - name: Checkout
+    - name: Checkout FFmpeg
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
     - name: Build macOS
       run: |
-        ./configure --prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a --enable-muxer=mp4,mov --enable-protocol=file,http,https
+        ./configure --prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree \
+          --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe \
+          --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
+          --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox \
+          --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a --enable-muxer=mp4,mov \
+          --enable-protocol=file,http,https
         make -j$(sysctl -n hw.ncpu) && make install
+
     - name: Upload macOS Binary
       uses: actions/upload-artifact@v4
       with:
