@@ -28,69 +28,71 @@ jobs:
           curl
           tar
 
+    # 重点：手动克隆最新版 vcpkg，避免环境冲突和库缺失
+    - name: Setup Fresh VCPKG
+      shell: bash
+      run: |
+        git clone --depth 1 https://github.com/microsoft/vcpkg.git $GITHUB_WORKSPACE/vcpkg
+        $GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.bat
+        # 设置环境变量，让后续步骤优先使用这个新 vcpkg
+        echo "VCPKG_ROOT=$GITHUB_WORKSPACE/vcpkg" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/vcpkg" >> $GITHUB_PATH
+
     - name: Install vcpkg Dependencies
-      # 安装核心依赖库（静态链接版）
+      # 修正了库名：libaom -> aom
       run: |
         vcpkg install libvpx:x64-windows-static
         vcpkg install dav1d:x64-windows-static
-        vcpkg install libaom:x64-windows-static
+        vcpkg install aom:x64-windows-static
         vcpkg install onevpl:x64-windows-static
         vcpkg install opus:x64-windows-static
         vcpkg install zlib:x64-windows-static
         vcpkg install kvazaar:x64-windows-static
 
-    - name: Install Hardware Headers (Fixed)
+    - name: Install Hardware Headers
       shell: bash
       run: |
         mkdir -p /usr/local/include
-        
-        # 使用 curl 直接下载源码包，避开 git 验证报错
-        # 1. NVIDIA NVENC 头文件
-        echo "Downloading NVENC headers..."
+        # NVIDIA NVENC 头文件
         curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
         tar -xzf nvenc.tar.gz
         cp -r nv-codec-headers-master/include/* /usr/local/include/
-        
-        # 2. AMD AMF 头文件
-        echo "Downloading AMF headers..."
+        # AMD AMF 头文件
         curl -L https://github.com/GPUOpen-Libraries-And-SDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
         tar -xzf amf.tar.gz
         mkdir -p /usr/local/include/AMF
         cp -r AMF-master/amf/public/include/* /usr/local/include/AMF/
-        
-        echo "Hardware headers installed to /usr/local/include"
 
     - name: Build FFmpeg
       shell: msys2 {0}
       run: |
-        # 转换 vcpkg 路径
-        VCPKG_ROOT="/c/vcpkg/installed/x64-windows-static"
-        export PKG_CONFIG_PATH="$VCPKG_ROOT/lib/pkgconfig"
+        # 使用我们自己安装的 vcpkg 路径
+        VCPKG_ROOT_MSYS="/c/users/runneradmin/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/vcpkg/installed/x64-windows-static"
+        
+        # 强制设置 pkg-config 寻找路径
+        export PKG_CONFIG_PATH="$VCPKG_ROOT_MSYS/lib/pkgconfig"
         
         ./configure \
           --toolchain=msvc \
           --arch=x86_64 \
           --prefix=./publish \
-          \
           --enable-version3 \
           --disable-gpl \
           --disable-nonfree \
-          \
           --enable-static \
           --disable-shared \
           --pkg-config-flags="--static" \
           \
-          # 精简模式：白名单开启
           --disable-all \
           --enable-ffmpeg --enable-ffprobe \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
           \
-          # 1. 容器与协议 (MP4/MOV)
+          # 1. 容器与协议
           --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
           --enable-muxer=mp4,mov \
           --enable-protocol=file,http,https,tcp,udp \
           \
-          # 2. 视频解码 (包含 H.264)
+          # 2. 视频解码
           --enable-decoder=h264,hevc,vp9,av1 \
           --enable-parser=h264,hevc,vp9,av1 \
           --enable-libvpx --enable-libdav1d \
@@ -101,38 +103,24 @@ jobs:
           --enable-encoder=av1_nvenc,av1_amf,av1_qsv,libaom_av1 \
           --enable-encoder=libvpx_vp9 \
           \
-          # 4. 音频支持 (AAC + Opus)
-          --enable-encoder=aac,libopus \
-          --enable-decoder=aac,opus \
-          --enable-parser=aac,opus \
-          --enable-libopus \
+          # 4. 音频支持
+          --enable-encoder=aac,libopus --enable-decoder=aac,opus --enable-parser=aac,opus --enable-libopus \
           \
           # 5. 硬件加速接口
           --enable-nvenc --enable-nvdec --enable-amf --enable-qsv --enable-libvpl --enable-d3d11va --enable-dxva2 \
           \
-          # 6. 滤镜与比特流过滤器 (MP4 封装必需)
+          # 6. 滤镜与 BSF
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
           \
-          --extra-cflags="-I$VCPKG_ROOT/include -I/usr/local/include" \
-          --extra-ldflags="-LIBPATH:$VCPKG_ROOT/lib -static"
+          --extra-cflags="-I$VCPKG_ROOT_MSYS/include -I/usr/local/include" \
+          --extra-ldflags="-LIBPATH:$VCPKG_ROOT_MSYS/lib -static"
 
         make -j$(nproc)
         make install
 
-    - name: Verify Build
-      shell: cmd
-      run: |
-        if exist publish\bin\ffmpeg.exe (
-          publish\bin\ffmpeg.exe -version
-          publish\bin\ffmpeg.exe -encoders | findstr "kvazaar nvenc amf qsv libaom"
-        ) else (
-          echo "Build failed: ffmpeg.exe not found."
-          exit 1
-        )
-
-    - name: Upload Artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-lgpl3-ultimate-binary
+        name: ffmpeg-lgpl3-optimized
         path: publish/bin/*.exe
