@@ -17,7 +17,6 @@ jobs:
     - name: Install Build Essentials
       run: |
         sudo apt-get update
-        # 直接安装系统自带的最新版 dav1d 及其他开发库 
         sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
           curl tar git libvpx-dev libaom-dev libopus-dev zlib1g-dev \
           libdav1d-dev  # 这里直接使用系统库
@@ -36,20 +35,22 @@ jobs:
     # 2. 手动编译 kvazaar (H.265 CPU 编码)
     - name: Build kvazaar
       run: |
-        # 使用 git 获取 v2.3.2 标签，这样 .pc 文件里才会有版本号
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
-        # 核心修复：手动向 CMake 注入版本号，防止 .pc 文件显示 unknown
         cmake -B kvz_build -S kvazaar \
               -DBUILD_SHARED_LIBS=OFF \
               -DCMAKE_INSTALL_PREFIX=$HOME/custom_build \
-              -DPROJECT_VERSION="2.3.2"
+              -DCMAKE_BUILD_TYPE=Release
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
         
-        # 强制修改 .pc 文件中的版本号，确保 FFmpeg 能够通过 >= 2.0.0 的检测
-        sed -i 's/Version: .*/Version: 2.3.2/' $HOME/custom_build/lib/pkgconfig/kvazaar.pc
-        # 打印一下确认修改成功
-        cat $HOME/custom_build/lib/pkgconfig/kvazaar.pc
+        PC_FILE=$HOME/custom_build/lib/pkgconfig/kvazaar.pc
+        # 1. 修复版本号 (解决 >= 2.0.0 检测)
+        sed -i 's/Version: .*/Version: 2.3.2/' $PC_FILE
+        # 2. 修复私有库依赖 (解决静态链接时的 pthread 报错)
+        sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl/' $PC_FILE
+        
+        echo "Fixed kvazaar.pc content:"
+        cat $PC_FILE
 
     # 3. 安装硬件加速头文件
     - name: Install Hardware Headers
