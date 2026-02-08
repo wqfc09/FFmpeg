@@ -49,28 +49,16 @@ jobs:
           sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
         fi
 
-# 2. 编译 kvazaar 
+# 2. 编译 kvazaar
     - name: Build kvazaar
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
         
-        #注入 Policy 和最低版本要求
+        # 修复逻辑：只在文件最开头强制声明版本，跳过对处理器变量的 sed 操作
+        # 直接通过命令行 -D 注入变量更安全
         sed -i '1i cmake_minimum_required(VERSION 3.10)\ncmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
-        
-        #给 ${CMAKE_SYSTEM_PROCESSOR} 加上双引号，防止变量为空导致 IN_LIST 报错
-        sed -i 's/${CMAKE_SYSTEM_PROCESSOR}/"${CMAKE_SYSTEM_PROCESSOR}"/g' kvazaar/CMakeLists.txt
-        
-        # --- DEBUG 信息输出 ---
-        echo "DEBUG: CMake Version:"
-        cmake --version
-        echo "DEBUG: Top of CMakeLists.txt:"
-        head -n 10 kvazaar/CMakeLists.txt
-        echo "DEBUG: Checking for IN_LIST usage:"
-        grep -n "IN_LIST" kvazaar/CMakeLists.txt
-        # ----------------------
 
         if [ "${{ matrix.target }}" = "windows" ]; then
-          # 3. 补充：手动指定处理器架构，防止 CMAKE_SYSTEM_PROCESSOR 为空
           cmake -B kvz_build -S kvazaar \
                 -DCMAKE_SYSTEM_NAME=Windows \
                 -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
@@ -81,16 +69,26 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Dkvazaar_tests=OFF
         else
-          cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -Dkvazaar_tests=OFF
+          # Linux 模式：显式指定处理器防止 IN_LIST 报错
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF
         fi
         
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
-        
-        # 修正 .pc 身份证
+
+        # 修正 .pc 身份证：增加对 Linux 多架构路径的支持
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
-        sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
-        sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl/' "$PC_FILE"
+        if [ -f "$PC_FILE" ]; then
+          sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
+          # 针对 Linux 静态链接，确保 pthread 等库被正确带入
+          if [ "${{ matrix.target }}" = "linux" ]; then
+            sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
+          fi
+        fi
 
     # 3. 安装硬件头文件
     - name: Install Hardware Headers
@@ -106,23 +104,27 @@ jobs:
     # 4. 构建 FFmpeg
     - name: Build FFmpeg
       run: |
-        export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
+        # 这里的路径必须包含 x86_64-linux-gnu，因为很多 Linux 发行版会把库塞进去
+        export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-encoder=hevc_qsv,h264_qsv,libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
-
+        
         if [ "${{ matrix.target }}" = "linux" ]; then
           ./configure $COMMON_ARGS \
             --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf \
-            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
+            --extra-cflags="-I$HOME/target_build/include" \
             --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl"
         else
+          # Windows 交叉编译
           ./configure $COMMON_ARGS \
             --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
+            --pkg-config-flags="--static" \
             --enable-encoder=h264_nvenc,hevc_nvenc,amf \
-            --extra-cflags="-I$HOME/target_build/include -I$HOME/target_build/include/vpl" \
+            --extra-cflags="-I$HOME/target_build/include" \
             --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++"
         fi
-        make -j$(nproc) && make install
+        make -j$(nproc)
+        make install
 
     - name: Upload Binary
       uses: actions/upload-artifact@v4
