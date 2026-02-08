@@ -45,10 +45,6 @@ jobs:
         # Intel QSV 在 Linux 下强烈依赖 dl (动态加载) 和 stdc++
         sed -i 's/Libs:.*/Libs: -L${libdir} -lvpl -lstdc++ -ldl/' $VPL_PC
         
-        # 3. 兼容性检查：确保 pkg-config 目录在 lib 下 (防止 CMake 把它装进 lib64)
-        mkdir -p $HOME/custom_build/lib/pkgconfig
-        cp $VPL_PC $HOME/custom_build/lib/pkgconfig/
-
         echo "Modified vpl.pc content:"
         cat $HOME/custom_build/lib/pkgconfig/vpl.pc
 
