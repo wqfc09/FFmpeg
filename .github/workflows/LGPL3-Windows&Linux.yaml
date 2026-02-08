@@ -54,10 +54,17 @@ jobs:
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
         
-        # 1. 在文件最开头插入设置，确保认识 IN_LIST
-        sed -i '1i cmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
-        # 2. 确保最低版本要求足够高（IN_LIST 需要 3.3+）
-        sed -i 's/cmake_minimum_required.*/cmake_minimum_required(VERSION 3.10)/' kvazaar/CMakeLists.txt
+        # 应用修复
+        sed -i '1i cmake_minimum_required(VERSION 3.10)\ncmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
+        
+        # --- DEBUG 信息输出 ---
+        echo "DEBUG: CMake Version:"
+        cmake --version
+        echo "DEBUG: Top of CMakeLists.txt:"
+        head -n 10 kvazaar/CMakeLists.txt
+        echo "DEBUG: Checking for IN_LIST usage:"
+        grep -n "IN_LIST" kvazaar/CMakeLists.txt
+        # ----------------------
 
         if [ "${{ matrix.target }}" = "windows" ]; then
           cmake -B kvz_build -S kvazaar \
