@@ -1,11 +1,11 @@
-name: FFmpeg-LGPL3-Ultimate-V6
+name: FFmpeg-Linux-LGPL3
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout Code
@@ -13,86 +13,94 @@ jobs:
       with:
         fetch-depth: 1
 
-    - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
-
-    - name: Setup MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        update: true
-        install: make pkg-config nasm yasm curl tar
-
-    # 核心修复：手动更新 vcpkg 索引并清除环境变量干扰
-    - name: Update VCPKG Registry
-      shell: bash
+    - name: Install Build Tools
       run: |
-        # 强制删除可能导致冲突的环境变量
-        unset VCPKG_ROOT
-        # 进入 vcpkg 预装目录并拉取最新 port 定义
-        cd /c/vcpkg
-        git pull
-        ./bootstrap-vcpkg.bat
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
+          git curl libvpx-dev libdav1d-dev libaom-dev libopus-dev zlib1g-dev
 
-    - name: Install Dependencies
-      shell: cmd
+    # 1. 手动编译 libvpl (Intel QSV)
+    - name: Build libvpl
       run: |
-        :: 显式指定路径，避免 mismatched 警告
-        C:\vcpkg\vcpkg.exe install --triplet=x64-windows-static ^
-          zlib libvpx dav1d aom onevpl opus kvazaar
+        git clone --depth 1 https://github.com/intel/libvpl
+        cd libvpl
+        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF \
+              -DCMAKE_INSTALL_PREFIX=$HOME/ffmpeg_build
+        cmake --build build --parallel $(nproc)
+        cmake --install build
 
+    # 2. 手动编译 kvazaar (H.265 CPU)
+    - name: Build kvazaar
+      run: |
+        git clone --depth 1 https://github.com/ultravideo/kvazaar
+        cd kvazaar
+        cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$HOME/ffmpeg_build
+        cmake --build build --parallel $(nproc)
+        cmake --install build
+
+    # 3. 安装硬件加速头文件 (NVIDIA & AMD)
     - name: Install Hardware Headers
-      shell: bash
       run: |
-        mkdir -p /usr/local/include
         # NVIDIA
-        curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
-        tar -xzf nvenc.tar.gz
-        cp -r nv-codec-headers-master/include/* /usr/local/include/
-        # AMD
-        curl -L https://github.com/GPUOpen-Libraries-And-SDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
-        tar -xzf amf.tar.gz
-        mkdir -p /usr/local/include/AMF
-        cp -r AMF-master/amf/public/include/* /usr/local/include/AMF/
+        git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers
+        cd nv-codec-headers && sudo make install PREFIX=$HOME/ffmpeg_build && cd ..
+        
+        # AMD AMF
+        git clone --depth 1 https://github.com/GPUOpen-Libraries-And-SDKs/AMF
+        mkdir -p $HOME/ffmpeg_build/include/AMF
+        cp -r AMF/amf/public/include/* $HOME/ffmpeg_build/include/AMF/
 
-    - name: Build FFmpeg
-      shell: msys2 {0}
+    # 4. 最终构建 FFmpeg 静态二进制文件
+    - name: Build FFmpeg Static
       run: |
-        # 准确定位静态库安装后的路径
-        VCPKG_STATIC_PATH="/c/vcpkg/installed/x64-windows-static"
-        export PKG_CONFIG_PATH="${VCPKG_STATIC_PATH}/lib/pkgconfig"
+        export PKG_CONFIG_PATH=$HOME/ffmpeg_build/lib/pkgconfig:$HOME/ffmpeg_build/lib64/pkgconfig:/usr/lib/pkgconfig
         
         ./configure \
-          --toolchain=msvc \
-          --arch=x86_64 \
-          --prefix=./publish \
+          --prefix=$HOME/ffmpeg_build/publish \
           --enable-version3 --disable-gpl --disable-nonfree \
           --enable-static --disable-shared \
-          --pkg-config-flags="--static" \
+          \
           --disable-all \
           --enable-ffmpeg --enable-ffprobe \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
+          \
+          # 1. 容器与协议
           --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
           --enable-muxer=mp4,mov \
           --enable-protocol=file,http,https,tcp,udp \
-          --enable-decoder=h264,hevc,vp9,av1 \
-          --enable-parser=h264,hevc,vp9,av1 \
+          \
+          # 2. 解码与解析
+          --enable-decoder=h264,hevc,vp9,av1,aac,opus \
+          --enable-parser=h264,hevc,vp9,av1,aac,opus \
           --enable-libvpx --enable-libdav1d \
-          --enable-encoder=h264_nvenc,h264_amf,h264_qsv \
-          --enable-encoder=hevc_nvenc,hevc_amf,hevc_qsv,libkvazaar \
-          --enable-encoder=av1_nvenc,av1_amf,av1_qsv,libaom_av1 \
-          --enable-encoder=libvpx_vp9 \
-          --enable-encoder=aac,libopus --enable-decoder=aac,opus --enable-parser=aac,opus --enable-libopus \
-          --enable-nvenc --enable-nvdec --enable-amf --enable-qsv --enable-libvpl --enable-d3d11va --enable-dxva2 \
+          \
+          # 3. 编码器 (精准命名：libvpl, libkvazaar)
+          --enable-libvpl \
+          --enable-libkvazaar \
+          --enable-libaom \
+          --enable-libopus \
+          --enable-encoder=h264_nvenc,h264_vaapi \
+          --enable-encoder=hevc_nvenc,hevc_vaapi,libkvazaar \
+          --enable-encoder=av1_nvenc,libaom_av1 \
+          --enable-encoder=libvpx_vp9,aac,libopus \
+          \
+          # 4. 硬件加速接口 (Linux 主要是 VAAPI 和 NVENC)
+          --enable-nvenc --enable-nvdec \
+          --enable-vaapi \
+          \
+          # 5. 必要的过滤器
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
-          --extra-cflags="-I${VCPKG_STATIC_PATH}/include -I/usr/local/include" \
-          --extra-ldflags="-LIBPATH:${VCPKG_STATIC_PATH}/lib -static"
+          \
+          --extra-cflags="-I$HOME/ffmpeg_build/include" \
+          --extra-ldflags="-L$HOME/ffmpeg_build/lib -L$HOME/ffmpeg_build/lib64 -static" \
+          --pkg-config-flags="--static"
 
         make -j$(nproc)
         make install
 
-    - name: Upload
+    - name: Upload Binary
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-lgpl3-fixed
-        path: publish/bin/*.exe
+        name: ffmpeg-linux-static-lgpl3
+        path: $HOME/ffmpeg_build/publish/bin/ffmpeg
