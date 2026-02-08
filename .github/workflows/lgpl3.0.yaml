@@ -19,7 +19,7 @@ jobs:
         sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
           curl tar git libvpx-dev libdav1d-dev libaom-dev libopus-dev zlib1g-dev
 
-    # 1. 从源码手动编译 libvpl (Intel QSV 核心)
+    # 1. 从源码手动编译 libvpl (Intel VPL 核心)
     - name: Build libvpl
       run: |
         curl -L https://github.com/intel/libvpl/archive/refs/heads/main.tar.gz -o vpl.tar.gz
@@ -94,7 +94,7 @@ jobs:
           --enable-encoder=libvpx_vp9,aac,libopus \
           --enable-nvenc --enable-nvdec \
           --enable-vaapi \
-          --enable-qsv \
+          --enable-libvpl \
           --enable-amf \
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
