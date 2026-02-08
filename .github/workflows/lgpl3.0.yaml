@@ -83,7 +83,7 @@ jobs:
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
 
 # 4. 构建 FFmpeg (混合链接模式)
-    - name: Build FFmpeg Static
+    - name: Build FFmpeg
       run: |
         # 关键：将所有可能的 pkgconfig 路径包含进来，增加一个对 x86_64-linux-gnu 的探测
         export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
@@ -128,11 +128,23 @@ jobs:
         make -j$(nproc)
         make install
 
+    - name: Verify Build
+      run: |
+        echo "=== 检查文件是否存在 ==="
+        ls -lh /home/runner/custom_build/publish/bin/ffmpeg
+        
+        echo "=== 检查版本与授权 (确保是 LGPL) ==="
+        /home/runner/custom_build/publish/bin/ffmpeg -version
+        
+        echo "=== 检查关键编码器 (libvpl, libkvazaar) ==="
+        /home/runner/custom_build/publish/bin/ffmpeg -encoders | grep -E "vpl|kvazaar"
+        
+        echo "=== 检查静态链接状态 (验证依赖) ==="
+        ldd /home/runner/custom_build/publish/bin/ffmpeg || true
+
     - name: Upload Binary
       uses: actions/upload-artifact@v4
       with:
         name: ffmpeg-lgpl3-linux-fastbuild
-        # 确保路径能兼容各种 Runner 环境
-        path: |
-          ${{ github.workspace }}/../custom_build/publish/bin/ffmpeg
-          ${{ github.workspace }}/custom_build/publish/bin/ffmpeg
+        path: /home/runner/custom_build/publish/bin/ffmpeg
+        if-no-files-found: error # 改为 error，如果没找到文件直接报错，方便排查
