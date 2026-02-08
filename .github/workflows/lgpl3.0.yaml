@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # 必须使用 24.04 才能在 apt 中获得 dav1d >= 1.0.0
+    runs-on: ubuntu-24.04
     
     steps:
     - name: Checkout FFmpeg
@@ -16,31 +17,23 @@ jobs:
     - name: Install Build Essentials
       run: |
         sudo apt-get update
-        # 彻底移除系统旧版以防 pkg-config 干扰
-        sudo apt-get remove -y libdav1d-dev
+        # 直接安装系统自带的最新版 dav1d 及其他开发库
         sudo apt-get install -y build-essential pkg-config nasm yasm cmake \
-          curl tar git meson ninja-build libvpx-dev libaom-dev libopus-dev zlib1g-dev
+          curl tar git libvpx-dev libaom-dev libopus-dev zlib1g-dev \
+          libdav1d-dev  # 这里直接使用系统库
 
-    # 1. 手动编译最新版 dav1d (由您提供的地址)
-    - name: Build dav1d
-      run: |
-        curl -L https://github.com/videolan/dav1d/archive/refs/heads/master.tar.gz -o dav1d.tar.gz
-        tar -xzf dav1d.tar.gz
-        cd dav1d-master
-        meson setup build --prefix=$HOME/custom_build --libdir=lib --buildtype=release -Ddefault_library=static -Dtests=false -Dexamples=false
-        ninja -C build install
-
-    # 2. 手动编译 libvpl (Intel QSV)
+    # 1. 手动编译 libvpl (Intel QSV 核心)
     - name: Build libvpl
       run: |
         curl -L https://github.com/intel/libvpl/archive/refs/heads/main.tar.gz -o vpl.tar.gz
         tar -xzf vpl.tar.gz
         cd libvpl-main
-        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
+        cmake -B build -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF \
+              -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
         cmake --build build --parallel $(nproc)
         cmake --install build
 
-    # 3. 手动编译 kvazaar (H.265 CPU 编码)
+    # 2. 手动编译 kvazaar (H.265 CPU 编码)
     - name: Build kvazaar
       run: |
         curl -L https://github.com/ultravideo/kvazaar/archive/refs/heads/master.tar.gz -o kvz.tar.gz
@@ -50,24 +43,25 @@ jobs:
         cmake --build build --parallel $(nproc)
         cmake --install build
 
-    # 4. 安装硬件加速头文件 (AMF 地址已修正)
+    # 3. 安装硬件加速头文件
     - name: Install Hardware Headers
       run: |
         mkdir -p $HOME/custom_build/include
-        # NVIDIA Headers
+        # NVIDIA
         curl -L https://github.com/FFmpeg/nv-codec-headers/archive/refs/heads/master.tar.gz -o nvenc.tar.gz
         tar -xzf nvenc.tar.gz
         cd nv-codec-headers-master && make PREFIX=$HOME/custom_build install && cd ..
-        # AMD AMF Headers (由您提供的地址)
-        curl -L https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
+        # AMD AMF
+        curl -L https://github.com/GPUOpen-Libraries-And-SDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
         tar -xzf amf.tar.gz
         mkdir -p $HOME/custom_build/include/AMF
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
 
-    # 5. 最终构建 FFmpeg 静态二进制文件
+    # 4. 构建 FFmpeg 静态二进制文件
     - name: Build FFmpeg Static
       run: |
-        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
+        # 混合 PKG_CONFIG_PATH：优先找手动编译的 libvpl/kvazaar，找不到再去系统目录找 dav1d/vpx/aom
+        export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib64/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         ./configure \
           --prefix=$HOME/custom_build/publish \
@@ -104,7 +98,7 @@ jobs:
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
           --extra-cflags="-I$HOME/custom_build/include" \
-          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib64 -static"
+          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib64"
 
         make -j$(nproc)
         make install
@@ -112,5 +106,8 @@ jobs:
     - name: Upload Binary
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-lgpl3-linux-v15
-        path: ${{ github.workspace }}/../custom_build/publish/bin/ffmpeg
+        name: ffmpeg-lgpl3-linux-fastbuild
+        # 确保路径能兼容各种 Runner 环境
+        path: |
+          ${{ github.workspace }}/../custom_build/publish/bin/ffmpeg
+          ${{ github.workspace }}/custom_build/publish/bin/ffmpeg
