@@ -49,7 +49,7 @@ jobs:
           sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
         fi
 
-    # 2. 编译 kvazaar (修复 Windows 交叉编译)
+# 2. 编译 kvazaar (修复 Windows 下的 CMake IN_LIST 语法报错)
     - name: Build kvazaar
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
@@ -59,12 +59,17 @@ jobs:
                 -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
                 -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
                 -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
-                -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF \
+                -DCMAKE_POLICY_DEFAULT_CMP0057=NEW  # <--- 核心修复：开启 IN_LIST 语法支持
         else
-          cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF
+          cmake -B kvz_build -S kvazaar -DCMAKE_INSTALL_PREFIX=$HOME/target_build -DBUILD_SHARED_LIBS=OFF -Dkvazaar_tests=OFF
         fi
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
+        
+        # 修正 .pc 身份证
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
         sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
         sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl/' "$PC_FILE"
