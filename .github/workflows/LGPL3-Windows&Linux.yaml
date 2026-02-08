@@ -69,8 +69,8 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Dkvazaar_tests=OFF
         else
-          # Linux 模式：显式指定处理器防止 IN_LIST 报错
-          cmake -B kvz_build -S kvazaar \
+        # Linux 模式：显式指定处理器防止 IN_LIST 报错
+        cmake -B kvz_build -S kvazaar \
                 -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
                 -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
                 -DBUILD_SHARED_LIBS=OFF \
@@ -80,14 +80,18 @@ jobs:
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
 
-        # 修正 .pc 身份证：增加对 Linux 多架构路径的支持
+        # 修正 .pc 身份证
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
         if [ -f "$PC_FILE" ]; then
+          # 确保版本号正确
           sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
-          # 针对 Linux 静态链接，确保 pthread 等库被正确带入
-          if [ "${{ matrix.target }}" = "linux" ]; then
-            sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
-          fi
+          
+          # 核心：在 Libs.private 后面补齐静态链接需要的库
+          # 注意：必须包含 -lm (数学库)
+          sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
+          
+          # 有些版本的 .pc 文件 Libs 这一行也需要加上这些，确保探测能过
+          sed -i '/^Libs:/ s/$/ -lpthread -lm -ldl -lrt/' "$PC_FILE"
         fi
 
     # 3. 安装硬件头文件
@@ -107,29 +111,23 @@ jobs:
         
         COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-encoder=hevc_qsv,h264_qsv,libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
         
-        # 尝试执行 configure，如果失败则打印日志
+        # 4. 构建 FFmpeg (修正后的 Linux 分支)
+        
         if [ "${{ matrix.target }}" = "linux" ]; then
           ./configure $COMMON_ARGS \
             --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf \
             --extra-cflags="-I$HOME/target_build/include" \
-            --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl" || \
-          { 
-            echo "--- CONFIGURE FAILED: SHOWING LAST 100 LINES OF config.log ---"; 
-            tail -n 100 ffbuild/config.log; 
-            exit 1; 
-          }
-        else
+            --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl -lrt" || \
+          { tail -n 100 ffbuild/config.log; exit 1; }
+          else
+          
           ./configure $COMMON_ARGS \
             --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
             --pkg-config-flags="--static" \
             --enable-encoder=h264_nvenc,hevc_nvenc,amf \
             --extra-cflags="-I$HOME/target_build/include" \
             --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++" || \
-          { 
-            echo "--- CONFIGURE FAILED: SHOWING LAST 100 LINES OF config.log ---"; 
-            tail -n 100 ffbuild/config.log; 
-            exit 1; 
-          }
+          { tail -n 100 ffbuild/config.log; exit 1; }
         fi
 
         make -j$(nproc)
