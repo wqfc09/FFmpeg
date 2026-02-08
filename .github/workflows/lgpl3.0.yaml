@@ -36,9 +36,9 @@ jobs:
     # 2. 手动编译 kvazaar (H.265 CPU 编码)
     - name: Build kvazaar
       run: |
-        curl -L https://github.com/ultravideo/kvazaar/archive/refs/tags/v2.3.2.tar.gz -o kvz.tar.gz
-        tar -xzf kvz.tar.gz
-        cd kvazaar-2.3.2
+        # 使用 git 获取 v2.3.2 标签，这样 .pc 文件里才会有版本号
+        git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
+        cd kvazaar
         cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$HOME/custom_build
         cmake --build build --parallel $(nproc)
         cmake --install build
