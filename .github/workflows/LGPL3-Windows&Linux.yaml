@@ -80,18 +80,49 @@ jobs:
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
 
+# 2. 编译 kvazaar
+    - name: Build kvazaar
+      run: |
+        git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
+        
+        # 修复 CMake Policy 报错
+        sed -i '1i cmake_minimum_required(VERSION 3.10)\ncmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
+
+        if [ "${{ matrix.target }}" = "windows" ]; then
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_NAME=Windows \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+                -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF
+        else
+          cmake -B kvz_build -S kvazaar \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
+                -DBUILD_SHARED_LIBS=OFF \
+                -Dkvazaar_tests=OFF
+        fi
+        
+        cmake --build kvz_build --parallel $(nproc)
+        cmake --install kvz_build
+
         # 修正 .pc 身份证
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
         if [ -f "$PC_FILE" ]; then
-          # 确保版本号正确
           sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
           
-          # 核心：在 Libs.private 后面补齐静态链接需要的库
-          # 注意：必须包含 -lm (数学库)
-          sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
-          
-          # 有些版本的 .pc 文件 Libs 这一行也需要加上这些，确保探测能过
-          sed -i '/^Libs:/ s/$/ -lpthread -lm -ldl -lrt/' "$PC_FILE"
+          if [ "${{ matrix.target }}" = "windows" ]; then
+            # Windows 分支：MinGW 静态链接通常只需要 pthread，不需要 -lm, -ldl, -lrt
+            sed -i 's/Libs.private:.*/Libs.private: -lpthread/' "$PC_FILE"
+            sed -i '/^Libs:/ s/$/ -lpthread/' "$PC_FILE"
+          else
+            # Linux 分支：必须带上数学库和系统库
+            sed -i 's/Libs.private:.*/Libs.private: -lpthread -lm -ldl -lrt/' "$PC_FILE"
+            sed -i '/^Libs:/ s/$/ -lpthread -lm -ldl -lrt/' "$PC_FILE"
+          fi
         fi
 
     # 3. 安装硬件头文件
@@ -105,13 +136,13 @@ jobs:
         tar -xzf amf.tar.gz
         mkdir -p $HOME/target_build/include/AMF && cp -r AMF-master/amf/public/include/* $HOME/target_build/include/AMF/
 
+    # 4. 构建 FFmpeg
     - name: Build FFmpeg
       run: |
+        # 确保包含自定义构建的 pkgconfig 路径
         export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-encoder=hevc_qsv,h264_qsv,libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
-        
-        # 4. 构建 FFmpeg (修正后的 Linux 分支)
         
         if [ "${{ matrix.target }}" = "linux" ]; then
           ./configure $COMMON_ARGS \
@@ -119,14 +150,17 @@ jobs:
             --extra-cflags="-I$HOME/target_build/include" \
             --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl -lrt" || \
           { tail -n 100 ffbuild/config.log; exit 1; }
-          else
-          
+        else
+          # --- Windows 交叉编译修正方案 ---
           ./configure $COMMON_ARGS \
-            --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
+            --arch=x86_64 \
+            --target-os=mingw32 \
+            --cross-prefix=x86_64-w64-mingw32- \
+            --pkg-config=pkg-config \
             --pkg-config-flags="--static" \
             --enable-encoder=h264_nvenc,hevc_nvenc,amf \
             --extra-cflags="-I$HOME/target_build/include" \
-            --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++" || \
+            --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++ -lpthread" || \
           { tail -n 100 ffbuild/config.log; exit 1; }
         fi
 
