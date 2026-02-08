@@ -1,0 +1,133 @@
+name: FFmpeg-LGPL3-Windows-Final
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        update: true
+        install: >-
+          make
+          pkg-config
+          nasm
+          yasm
+          git
+
+    - name: Install vcpkg Dependencies
+      # 自动安装静态库：libvpx(VP9), dav1d(AV1), libaom(AV1), onevpl(QSV), opus
+      run: |
+        vcpkg install libvpx:x64-windows-static
+        vcpkg install dav1d:x64-windows-static
+        vcpkg install libaom:x64-windows-static
+        vcpkg install onevpl:x64-windows-static
+        vcpkg install opus:x64-windows-static
+        vcpkg install zlib:x64-windows-static
+
+    - name: Install Hardware Headers
+      shell: bash
+      run: |
+        # 创建安装目录
+        mkdir -p /usr/local/include
+        
+        # 1. NVIDIA NVENC 头文件
+        git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers
+        cp -r nv-codec-headers/include/* /usr/local/include/
+        
+        # 2. AMD AMF 头文件
+        git clone --depth 1 https://github.com/GPUOpen-Libraries-And-SDKs/AMF
+        mkdir -p /usr/local/include/AMF
+        cp -r AMF/amf/public/include/* /usr/local/include/AMF/
+
+    - name: Build FFmpeg
+      shell: msys2 {0}
+      run: |
+        # 映射 vcpkg 静态库路径
+        VCPKG_ROOT="/c/vcpkg/installed/x64-windows-static"
+        export PKG_CONFIG_PATH="$VCPKG_ROOT/lib/pkgconfig"
+        
+        ./configure \
+          --toolchain=msvc \
+          --arch=x86_64 \
+          --prefix=./publish \
+          \
+          --enable-version3 \
+          --disable-gpl \
+          --disable-nonfree \
+          \
+          --enable-static \
+          --disable-shared \
+          --pkg-config-flags="--static" \
+          \
+          # 精简模式：关闭所有，按需开启
+          --disable-all \
+          --enable-ffmpeg \
+          --enable-ffprobe \
+          --enable-avcodec \
+          --enable-avformat \
+          --enable-avfilter \
+          --enable-swresample \
+          --enable-swscale \
+          \
+          # 1. 容器与协议 (MP4 核心)
+          --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe \
+          --enable-muxer=mp4,mov \
+          --enable-protocol=file,http,https,tcp,udp \
+          \
+          # 2. 视频解码器 (CPU)
+          --enable-decoder=hevc,vp9,av1 \
+          --enable-parser=hevc,vp9,av1 \
+          --enable-libvpx \
+          --enable-libdav1d \
+          \
+          # 3. 视频编码器 (硬件加速 + 现代 CPU 编码)
+          --enable-encoder=hevc_nvenc,hevc_amf,hevc_qsv \
+          --enable-encoder=av1_nvenc,av1_amf,av1_qsv \
+          --enable-encoder=libvpx_vp9,libaom_av1 \
+          \
+          # 4. 音频支持 (AAC + Opus)
+          --enable-encoder=aac,libopus \
+          --enable-decoder=aac,opus \
+          --enable-parser=aac,opus \
+          --enable-libopus \
+          \
+          # 5. 硬件加速接口
+          --enable-nvenc --enable-nvdec \
+          --enable-amf \
+          --enable-qsv --enable-libvpl \
+          --enable-d3d11va --enable-dxva2 \
+          \
+          # 6. 核心滤镜与比特流过滤器 (MP4 封装必需)
+          --enable-bsf=hevc_mp4toannexb,hevc_metadata,av1_metadata,av1_frame_merge \
+          --enable-filter=aresample,scale,format,fps \
+          \
+          --extra-cflags="-I$VCPKG_ROOT/include -I/usr/local/include" \
+          --extra-ldflags="-LIBPATH:$VCPKG_ROOT/lib -static"
+
+        make -j$(nproc)
+        make install
+
+    - name: Verify License & Capabilities
+      shell: cmd
+      run: |
+        publish\bin\ffmpeg.exe -version
+        publish\bin\ffmpeg.exe -encoders | findstr "nvenc amf qsv libvpx libaom aac opus"
+
+    - name: Archive Production
+      uses: actions/upload-artifact@v4
+      with:
+        name: ffmpeg-lgpl3-h265-vp9-av1
+        path: publish/bin/*.exe
