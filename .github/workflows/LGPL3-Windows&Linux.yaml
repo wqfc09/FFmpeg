@@ -49,38 +49,7 @@ jobs:
           sed -i 's/Libs: .*/& -lstdc++ -ldl -lpthread/' "$PC_FILE"
         fi
 
-# 2. 编译 kvazaar
-    - name: Build kvazaar
-      run: |
-        git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
-        
-        # 修复逻辑：只在文件最开头强制声明版本，跳过对处理器变量的 sed 操作
-        # 直接通过命令行 -D 注入变量更安全
-        sed -i '1i cmake_minimum_required(VERSION 3.10)\ncmake_policy(SET CMP0057 NEW)' kvazaar/CMakeLists.txt
-
-        if [ "${{ matrix.target }}" = "windows" ]; then
-          cmake -B kvz_build -S kvazaar \
-                -DCMAKE_SYSTEM_NAME=Windows \
-                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
-                -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-                -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
-                -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
-                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
-                -DBUILD_SHARED_LIBS=OFF \
-                -Dkvazaar_tests=OFF
-        else
-        # Linux 模式：显式指定处理器防止 IN_LIST 报错
-        cmake -B kvz_build -S kvazaar \
-                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
-                -DCMAKE_INSTALL_PREFIX=$HOME/target_build \
-                -DBUILD_SHARED_LIBS=OFF \
-                -Dkvazaar_tests=OFF
-        fi
-        
-        cmake --build kvz_build --parallel $(nproc)
-        cmake --install kvz_build
-
-# 2. 编译 kvazaar
+    # 2. 编译 kvazaar
     - name: Build kvazaar
       run: |
         git clone --branch v2.3.2 --depth 1 https://github.com/ultravideo/kvazaar
@@ -109,7 +78,7 @@ jobs:
         cmake --build kvz_build --parallel $(nproc)
         cmake --install kvz_build
 
-        # 修正 .pc 身份证
+        # --- 重点：修正 .pc 身份证 ---
         PC_FILE=$(find $HOME/target_build -name "kvazaar.pc" | head -n 1)
         if [ -f "$PC_FILE" ]; then
           sed -i 's/Version: .*/Version: 2.3.2/' "$PC_FILE"
@@ -125,6 +94,7 @@ jobs:
           fi
         fi
 
+        
     # 3. 安装硬件头文件
     - name: Install Hardware Headers
       run: |
