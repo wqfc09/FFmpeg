@@ -52,7 +52,7 @@ jobs:
         tar -xzf nvenc.tar.gz
         cd nv-codec-headers-master && make PREFIX=$HOME/custom_build install && cd ..
         # AMD AMF
-        curl -L https://github.com/GPUOpen-Libraries-And-SDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
+        curl -L https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/heads/master.tar.gz -o amf.tar.gz
         tar -xzf amf.tar.gz
         mkdir -p $HOME/custom_build/include/AMF
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
