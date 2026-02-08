@@ -65,10 +65,10 @@ jobs:
         mkdir -p $HOME/custom_build/include/AMF
         cp -r AMF-master/amf/public/include/* $HOME/custom_build/include/AMF/
 
-    # 4. 构建 FFmpeg 静态二进制文件
 # 4. 构建 FFmpeg (混合链接模式)
-    - name: Build FFmpeg
+    - name: Build FFmpeg Static
       run: |
+        # 关键：将所有可能的 pkgconfig 路径包含进来
         export PKG_CONFIG_PATH=$HOME/custom_build/lib/pkgconfig:$HOME/custom_build/lib64/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         ./configure \
@@ -78,6 +78,7 @@ jobs:
           --disable-nonfree \
           --enable-static \
           --disable-shared \
+          --pkg-config-flags="--static" \
           --disable-all \
           --enable-ffmpeg \
           --enable-ffprobe \
@@ -105,7 +106,7 @@ jobs:
           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,av1_frame_merge \
           --enable-filter=aresample,scale,format,fps \
           --extra-cflags="-I$HOME/custom_build/include" \
-          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib64"
+          --extra-ldflags="-L$HOME/custom_build/lib -L$HOME/custom_build/lib64 -lpthread -lm -ldl"
 
         make -j$(nproc)
         make install
