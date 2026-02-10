@@ -117,12 +117,12 @@ jobs:
           --enable-static --disable-shared --disable-all \
           --enable-ffmpeg --enable-ffprobe \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
-          --enable-indev=lavfi --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,vpp_qsv,scale_cuda,hwupload,hwdownload \
           --enable-libvpl --enable-libkvazaar \
           --enable-hwaccel=h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,cuda,d3d11va,dxva2 \
           --enable-decoder=h264,hevc,vp9,av1,h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid,av1_cuvid \
-          --enable-demuxer=avi,mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
-          --enable-muxer=mp4,mov \
+          --enable-indev=lavfi --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,vpp_qsv,scale_cuda,hwupload,hwdownload,testsrc2,color \
+          --enable-demuxer=lavfi,avi,mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
+          --enable-muxer=avi,mp4,mov \
           --enable-protocol=file,http,https,tcp,udp"
         
         if [ "${{ matrix.target }}" = "linux" ]; then
