@@ -122,7 +122,7 @@ jobs:
           --enable-decoder=h264,hevc,vp9,av1,h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid,av1_cuvid \
           --enable-indev=lavfi --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,vpp_qsv,scale_cuda,hwupload,hwdownload,testsrc2,color,buffer,buffersink \
           --enable-demuxer=lavfi,avi,mov,mp4,m4a,yuv4mpegpipe,h264,hevc \
-          --enable-muxer=avi,mp4,mov \
+          --enable-muxer=avi,mp4,mov,null,image2 \
           --enable-protocol=file,http,https,tcp,udp"
         
         if [ "${{ matrix.target }}" = "linux" ]; then
