@@ -115,8 +115,9 @@ jobs:
         COMMON_ARGS="--prefix=$HOME/publish \
           --enable-version3 --disable-gpl --disable-nonfree \
           --enable-static --disable-shared --disable-all \
-          --enable-ffmpeg --enable-ffprobe --enable-indev=lavfi \
+          --enable-ffmpeg --enable-ffprobe \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
+          --enable-indev=lavfi --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,vpp_qsv,scale_cuda,hwupload,hwdownload \
           --enable-libvpl --enable-libkvazaar \
           --enable-hwaccel=h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,cuda,d3d11va,dxva2 \
           --enable-decoder=h264,hevc,vp9,av1,h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid,av1_cuvid \
