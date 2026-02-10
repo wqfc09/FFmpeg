@@ -115,7 +115,7 @@ jobs:
         COMMON_ARGS="--prefix=$HOME/publish \
           --enable-version3 --disable-gpl --disable-nonfree \
           --enable-static --disable-shared --disable-all \
-          --enable-ffmpeg --enable-ffprobe \
+          --enable-ffmpeg --enable-ffprobe --enable-indev=lavfi \
           --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale \
           --enable-libvpl --enable-libkvazaar \
           --enable-hwaccel=h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,cuda,d3d11va,dxva2 \
