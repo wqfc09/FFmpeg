@@ -112,12 +112,12 @@ jobs:
         export PKG_CONFIG_PATH=$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         
         # 基础参数：去掉平台相关的硬加速，留在分支里加
-        COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
+        COMMON_ARGS="--prefix=$HOME/publish --enable-version3 --disable-gpl --disable-nonfree --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-ffprobe --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-swscale --enable-libvpl --enable-qsv --enable-libkvazaar --enable-decoder=h264,hevc,vp9,av1 --enable-demuxer=mov,mp4,m4a,yuv4mpegpipe,h264,hevc --enable-muxer=mp4,mov --enable-protocol=file,http,https,tcp,udp"
         
         if [ "${{ matrix.target }}" = "linux" ]; then
           ./configure $COMMON_ARGS \
             --enable-vaapi --enable-libdav1d --enable-libvpx --enable-libaom --enable-libopus \
-            --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,amf,libkvazaar \
+            --enable-encoder=h264_vaapi,hevc_vaapi,h264_nvenc,hevc_nvenc,av1_nvenc,amf,av1_amf,libkvazaar,libsvtav1,h264_qsv,hevc_qsv,av1_qsv \
             --extra-cflags="-I$HOME/target_build/include" \
             --extra-ldflags="-L$HOME/target_build/lib -L$HOME/target_build/lib/x86_64-linux-gnu -lstdc++ -lpthread -lm -ldl -lrt" || \
           { tail -n 100 ffbuild/config.log; exit 1; }
@@ -125,7 +125,7 @@ jobs:
           ./configure $COMMON_ARGS \
             --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
             --pkg-config=pkg-config --pkg-config-flags="--static" \
-            --enable-encoder=h264_nvenc,hevc_nvenc,amf,libkvazaar \
+            --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,amf,av1_amf,libkvazaar,libsvtav1,h264_qsv,hevc_qsv,av1_qsv \
             --extra-cflags="-I$HOME/target_build/include -DKVZ_STATIC_LIB" \
             --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++ -lpthread" || \
           { tail -n 100 ffbuild/config.log; exit 1; }
