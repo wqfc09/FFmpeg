@@ -25,7 +25,7 @@ jobs:
       run: |
         git clone --depth 1 --recursive https://github.com/cloudflare/quiche
         cd quiche
-        cargo build --package quiche --release --features ffi,pkg-config-meta,fs
+        cargo build --package quiche --release --features ffi,pkg-config-meta
         mkdir -p $HOME/target_build/include $HOME/target_build/lib/pkgconfig
         cp include/quiche.h $HOME/target_build/include/
         cp target/release/libquiche.a $HOME/target_build/lib/
@@ -118,7 +118,7 @@ jobs:
         echo "Building libquiche..."
         git clone --depth 1 --recursive https://github.com/cloudflare/quiche
         cd quiche
-        cargo build --package quiche --release --features ffi,pkg-config-meta,fs
+        cargo build --package quiche --release --features ffi,pkg-config-meta
         
         mkdir -p $TARGET_DIR/include $TARGET_DIR/lib/pkgconfig
         cp include/quiche.h $TARGET_DIR/include/
