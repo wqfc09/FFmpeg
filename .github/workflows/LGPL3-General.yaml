@@ -27,7 +27,7 @@ jobs:
         cd quiche
         cargo build --package quiche --release --features ffi,pkg-config-meta
         mkdir -p $HOME/target_build/include $HOME/target_build/lib/pkgconfig
-        cp include/quiche.h $HOME/target_build/include/
+        cp quiche/include/quiche.h $HOME/target_build/include/
         cp target/release/libquiche.a $HOME/target_build/lib/
         cp target/release/quiche.pc $HOME/target_build/lib/pkgconfig/
 
@@ -121,7 +121,7 @@ jobs:
         cargo build --package quiche --release --features ffi,pkg-config-meta
         
         mkdir -p $TARGET_DIR/include $TARGET_DIR/lib/pkgconfig
-        cp include/quiche.h $TARGET_DIR/include/
+        cp quiche/include/quiche.h $TARGET_DIR/include/
         cp target/release/libquiche.a $TARGET_DIR/lib/
         cp target/release/quiche.pc $TARGET_DIR/lib/pkgconfig/
         cd ..
