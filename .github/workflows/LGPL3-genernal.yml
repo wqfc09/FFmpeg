@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - ".github/workflows/LGPL3-genernal.yml"
+
 jobs:
   build-linux-windows:
     name: Build ${{ matrix.target }} FFmpeg
