@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - ".github/workflows/LGPL3-genernal.yml"
-
 jobs:
   build-linux-windows:
     name: Build ${{ matrix.target }} FFmpeg
@@ -107,7 +106,66 @@ jobs:
             fi
           fi
 
-      # 3. 安装硬件头文件
+      # 3. 编译 libwebp（Linux/Windows）
+      - name: Build libwebp
+        run: |
+          set -euo pipefail
+          git clone --branch v1.4.0 --depth 1 https://github.com/webmproject/libwebp
+
+          if [ "${{ matrix.target }}" = "windows" ]; then
+            cmake -B webp_build -S libwebp \
+              -DCMAKE_SYSTEM_NAME=Windows \
+              -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+              -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+              -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+              -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+              -DCMAKE_AR=x86_64-w64-mingw32-gcc-ar \
+              -DCMAKE_RANLIB=x86_64-w64-mingw32-gcc-ranlib \
+              -DCMAKE_INSTALL_PREFIX="$HOME/target_build" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DWEBP_BUILD_CWEBP=OFF \
+              -DWEBP_BUILD_DWEBP=OFF \
+              -DWEBP_BUILD_GIF2WEBP=OFF \
+              -DWEBP_BUILD_IMG2WEBP=OFF \
+              -DWEBP_BUILD_VWEBP=OFF \
+              -DWEBP_BUILD_WEBPINFO=OFF \
+              -DWEBP_BUILD_EXTRAS=OFF
+          else
+            cmake -B webp_build -S libwebp \
+              -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+              -DCMAKE_INSTALL_PREFIX="$HOME/target_build" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DWEBP_BUILD_CWEBP=OFF \
+              -DWEBP_BUILD_DWEBP=OFF \
+              -DWEBP_BUILD_GIF2WEBP=OFF \
+              -DWEBP_BUILD_IMG2WEBP=OFF \
+              -DWEBP_BUILD_VWEBP=OFF \
+              -DWEBP_BUILD_WEBPINFO=OFF \
+              -DWEBP_BUILD_EXTRAS=OFF
+          fi
+
+          cmake --build webp_build --parallel "$(nproc)"
+          cmake --install webp_build
+
+          # 某些交叉场景下不会自动生成 pkg-config 文件，这里兜底写入
+          mkdir -p "$HOME/target_build/lib/pkgconfig"
+          if [ ! -f "$HOME/target_build/lib/pkgconfig/libwebp.pc" ]; then
+            cat > "$HOME/target_build/lib/pkgconfig/libwebp.pc" <<'EOF'
+            prefix=/home/runner/target_build
+            exec_prefix=${prefix}
+            libdir=${exec_prefix}/lib
+            includedir=${prefix}/include
+
+            Name: libwebp
+            Description: WebP image codec library
+            Version: 1.4.0
+            Libs: -L${libdir} -lwebp -lwebpmux -lsharpyuv
+            Libs.private: -lm
+            Cflags: -I${includedir}
+            EOF
+          fi
+
+      # 4. 安装硬件头文件
       - name: Install Hardware Headers
         run: |
           mkdir -p "$HOME/target_build/include"
@@ -121,7 +179,7 @@ jobs:
           mkdir -p "$HOME/target_build/include/AMF"
           cp -r AMF-master/amf/public/include/* "$HOME/target_build/include/AMF/"
 
-      # 4. 编译 FFmpeg（Linux/Windows）
+      # 5. 编译 FFmpeg（Linux/Windows）
       - name: Build FFmpeg
         run: |
           set -euo pipefail
@@ -132,6 +190,9 @@ jobs:
             export PKG_CONFIG_PATH="$HOME/target_build/lib/pkgconfig:$HOME/target_build/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
           fi
 
+          pkg-config --modversion libwebp
+          pkg-config --libs --static libwebp
+
           COMMON_ARGS="--prefix=$HOME/publish \
             --enable-version3 --disable-gpl --disable-nonfree \
             --enable-static --disable-shared --disable-all \
@@ -141,8 +202,8 @@ jobs:
             --enable-indev=lavfi \
             --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,hwupload,hwdownload,testsrc2,color,buffer,buffersink \
             --enable-parser=h264,hevc,aac,mpegaudio \
-            --enable-demuxer=lavfi,avi,mov,mp4,m4a,matroska,yuv4mpegpipe,h264,hevc,aac,mp3,webp,image2 \
-            --enable-muxer=avi,mp4,mov,null,image2,webp \
+            --enable-demuxer=lavfi,avi,mov,mkv,mp4,m4a,matroska,yuv4mpegpipe,h264,hevc,aac,mp3,webp,image2 \
+            --enable-muxer=avi,mp4,mov,mkv,null,image2,webp \
             --enable-decoder=h264,hevc,vp9,av1,aac,mp3,opus,webp,mjpeg,png,wrapped_avframe \
             --enable-encoder=libkvazaar,wrapped_avframe"
 
@@ -161,9 +222,10 @@ jobs:
             ./configure $COMMON_ARGS \
               --arch=x86_64 --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32- \
               --pkg-config=pkg-config --pkg-config-flags="--static" \
+              --enable-libwebp \
               --enable-hwaccel=h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,cuda,d3d11va,dxva2 \
               --enable-decoder=h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid \
-              --enable-encoder=h264_nvenc,hevc_nvenc,h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_amf,hevc_amf,av1_amf,libkvazaar,webp,wrapped_avframe \
+              --enable-encoder=h264_nvenc,hevc_nvenc,h264_qsv,hevc_qsv,vp9_qsv,av1_qsv,h264_amf,hevc_amf,av1_amf,libkvazaar,libwebp,libwebp_anim,wrapped_avframe \
               --enable-protocol=file,http,tcp,udp \
               --extra-cflags="-I$HOME/target_build/include -DKVZ_STATIC_LIB" \
               --extra-ldflags="-L$HOME/target_build/lib -static -lstdc++ -lpthread" || \
@@ -219,8 +281,8 @@ jobs:
             --enable-indev=lavfi \
             --enable-filter=split,scale,format,null,unsharp,eq,hqdn3d,hwupload,hwdownload,testsrc2,color,buffer,buffersink \
             --enable-parser=h264,hevc,aac,mpegaudio \
-            --enable-demuxer=lavfi,avi,mov,mp4,m4a,matroska,yuv4mpegpipe,h264,hevc,aac,mp3,webp,image2 \
-            --enable-muxer=avi,mp4,mov,null,image2,webp \
+            --enable-demuxer=lavfi,avi,mov,mkv,mp4,m4a,matroska,yuv4mpegpipe,h264,hevc,aac,mp3,webp,image2 \
+            --enable-muxer=avi,mp4,mov,mkv,null,image2,webp \
             --enable-decoder=h264,hevc,vp9,av1,aac,mp3,opus,webp,mjpeg,png \
             --enable-encoder=h264_videotoolbox,hevc_videotoolbox,aac,libwebp,libwebp_anim,wrapped_avframe \
             --enable-protocol=file,http,tcp,udp \
