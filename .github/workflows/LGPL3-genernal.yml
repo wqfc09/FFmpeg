@@ -121,8 +121,7 @@ jobs:
       - name: Build libwebp
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/webmproject/libwebp
-          (cd libwebp && git checkout v1.4.0)
+          git clone --branch v1.4.0 --depth 1 https://github.com/webmproject/libwebp
 
           if [ "${{ matrix.target }}" = "windows" ]; then
             AR_BIN="$(command -v x86_64-w64-mingw32-gcc-ar || command -v x86_64-w64-mingw32-gcc-ar-posix || command -v x86_64-w64-mingw32-ar)"
