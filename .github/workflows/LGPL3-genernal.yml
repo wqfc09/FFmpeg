@@ -2,6 +2,15 @@ name: FFmpeg-LGPL3-Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      ffmpeg_repository:
+        description: FFmpeg 源码仓库（owner/repo）
+        required: true
+        default: FFmpeg/FFmpeg
+      ffmpeg_ref:
+        description: FFmpeg 分支、tag 或 commit
+        required: true
+        default: n7.1.1
   push:
     paths:
       - ".github/workflows/LGPL3-genernal.yml"
@@ -107,21 +116,28 @@ jobs:
             fi
           fi
 
+
       # 3. 编译 libwebp（Linux/Windows）
       - name: Build libwebp
         run: |
           set -euo pipefail
-          git clone --branch v1.4.0 --depth 1 https://github.com/webmproject/libwebp
+          git clone --depth 1 https://github.com/webmproject/libwebp
+          (cd libwebp && git checkout v1.4.0)
 
           if [ "${{ matrix.target }}" = "windows" ]; then
+            AR_BIN="$(command -v x86_64-w64-mingw32-gcc-ar || command -v x86_64-w64-mingw32-gcc-ar-posix || command -v x86_64-w64-mingw32-ar)"
+            RANLIB_BIN="$(command -v x86_64-w64-mingw32-gcc-ranlib || command -v x86_64-w64-mingw32-gcc-ranlib-posix || command -v x86_64-w64-mingw32-ranlib)"
+            echo "Using AR: $AR_BIN"
+            echo "Using RANLIB: $RANLIB_BIN"
+
             cmake -B webp_build -S libwebp \
               -DCMAKE_SYSTEM_NAME=Windows \
               -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
               -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
               -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
               -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
-              -DCMAKE_AR=x86_64-w64-mingw32-gcc-ar \
-              -DCMAKE_RANLIB=x86_64-w64-mingw32-gcc-ranlib \
+              -DCMAKE_AR="$AR_BIN" \
+              -DCMAKE_RANLIB="$RANLIB_BIN" \
               -DCMAKE_INSTALL_PREFIX="$HOME/target_build" \
               -DBUILD_SHARED_LIBS=OFF \
               -DWEBP_BUILD_CWEBP=OFF \
@@ -148,23 +164,13 @@ jobs:
           cmake --build webp_build --parallel "$(nproc)"
           cmake --install webp_build
 
-          # 某些交叉场景下不会自动生成 pkg-config 文件，这里兜底写入
-          mkdir -p "$HOME/target_build/lib/pkgconfig"
+          # 强校验：没有 libwebp.pc 就直接失败，避免后续 FFmpeg configure 才报错
           if [ ! -f "$HOME/target_build/lib/pkgconfig/libwebp.pc" ]; then
-            cat > "$HOME/target_build/lib/pkgconfig/libwebp.pc" <<'EOF'
-            prefix=/home/runner/target_build
-            exec_prefix=${prefix}
-            libdir=${exec_prefix}/lib
-            includedir=${prefix}/include
-
-            Name: libwebp
-            Description: WebP image codec library
-            Version: 1.4.0
-            Libs: -L${libdir} -lwebp -lwebpmux -lsharpyuv
-            Libs.private: -lm
-            Cflags: -I${includedir}
-            EOF
+            echo "libwebp.pc 未生成，安装目录如下："
+            find "$HOME/target_build" -maxdepth 3 -type f | sort
+            exit 1
           fi
+
 
       # 4. 安装硬件头文件
       - name: Install Hardware Headers
